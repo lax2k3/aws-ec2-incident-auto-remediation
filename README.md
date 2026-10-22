@@ -1,10 +1,10 @@
 # AWS EC2 Incident Remediation Pipeline
 
-An event-driven AWS monitoring and automated recovery solution that detects EC2 CPU saturation, publishes an alarm through Amazon SNS, and invokes a Lambda function to perform a safe reboot of the impacted instance.
+An event-driven AWS monitoring and automated recovery solution that detects EC2 CPU saturation, publishes an alarm through Amazon SNS, and invokes a Lambda function to perform a safe reboot of the affected EC2 instance.
 
 ## Overview
 
-This project demonstrates a zero-touch remediation workflow for EC2 workloads experiencing CPU spikes or runaway processes. When CloudWatch detects sustained CPU stress, it publishes an alarm event to an SNS topic. An AWS Lambda function inspects the alarm payload, validates the target instance, and triggers `ec2:RebootInstances` to recover the server without human intervention.
+This project demonstrates a zero-touch remediation workflow for EC2 workloads experiencing CPU spikes or runaway processes. When CloudWatch detects sustained CPU stress, it publishes an alarm event to an SNS topic, which triggers a Lambda function that validates the EC2 instance state and initiates a reboot if the instance is in an eligible state.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ flowchart LR
 
 ## Problem Statement
 
-When EC2 instances run CPU-intensive workloads or encounter runaway processes, the instance can become unresponsive or severely degraded. Without automated remediation, recovery depends on manual intervention, which slows response time and increases operational risk.
+When EC2 instances run CPU-intensive workloads or encounter runaway processes, the instance can become unresponsive or severely degraded. Without automated remediation, recovery depends on manual intervention and can take longer than acceptable for production workloads.
 
 ## Solution
 
@@ -92,35 +92,7 @@ Create a role named `EC2AutoRemediationLambdaRole` with the trust policy for Lam
 }
 ```
 
-Attach the least-privilege policy from `iam/lambda-policy.json`:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "EC2StateReadAndRebootPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:DescribeInstances",
-        "ec2:DescribeInstanceStatus",
-        "ec2:RebootInstances"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "CloudWatchLogsAccess",
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
-      "Resource": "arn:aws:logs:*:*:*"
-    }
-  ]
-}
-```
+Attach the least-privilege policy defined in `iam/lambda-policy.json`.
 
 ### 2. Create the Lambda Function
 
@@ -131,7 +103,7 @@ Create a Lambda function named `ec2_auto_remediator` with the following runtime 
 - Timeout: 30 seconds
 - Execution role: `EC2AutoRemediationLambdaRole`
 
-Use the code in `src/lambda_function.py`.
+Use the implementation stored in `src/lambda_function.py`.
 
 ### 3. Configure SNS Topic and Lambda Trigger
 
@@ -161,70 +133,6 @@ The Lambda function performs the following actions:
 4. Calls `DescribeInstances` to confirm current EC2 state
 5. Only reboots when the instance is in a valid state (`running` or `stopping`)
 6. Returns a success or no-op result for every alarm event
-
-## Lambda Code
-
-The Python implementation is stored in `src/lambda_function.py`.
-
-```python
-import json
-import logging
-import boto3
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-ec2_client = boto3.client('ec2')
-
-
-def lambda_handler(event, context):
-    logger.info("Received event: %s", json.dumps(event))
-
-    try:
-        sns_record = event['Records'][0]['Sns']
-        sns_message = json.loads(sns_record['Message'])
-    except (KeyError, json.JSONDecodeError) as err:
-        logger.error("Failed to parse SNS event payload: %s", str(err))
-        return {"statusCode": 400, "body": "Invalid payload"}
-
-    alarm_name = sns_message.get('AlarmName', 'Unknown')
-    new_state = sns_message.get('NewStateValue', 'Unknown')
-    dimensions = sns_message.get('Trigger', {}).get('Dimensions', [])
-
-    instance_id = None
-    for dim in dimensions:
-        if dim.get('name') == 'InstanceId':
-            instance_id = dim.get('value')
-            break
-
-    if not instance_id:
-        logger.error("No InstanceId found in alarm dimensions.")
-        return {"statusCode": 400, "body": "Instance ID not present"}
-
-    logger.info("Alarm '%s' triggered state '%s' for instance: %s", alarm_name, new_state, instance_id)
-
-    try:
-        response = ec2_client.describe_instances(InstanceIds=[instance_id])
-        state = response['Reservations'][0]['Instances'][0]['State']['Name']
-        logger.info("Current state of instance %s is %s", instance_id, state)
-
-        if state not in ['running', 'stopping']:
-            logger.warning("Instance %s is in state '%s'. Skipping reboot action.", instance_id, state)
-            return {"statusCode": 200, "body": "No action needed"}
-
-        logger.info("Initiating automated reboot for instance: %s", instance_id)
-        ec2_client.reboot_instances(InstanceIds=[instance_id])
-        logger.info("Reboot signal successfully dispatched to instance %s", instance_id)
-
-        return {
-            "statusCode": 200,
-            "body": f"Successfully initiated remediation for {instance_id}"
-        }
-
-    except Exception as exc:
-        logger.error("Error executing remediation on instance %s: %s", instance_id, str(exc))
-        raise exc
-```
 
 ## Verification and Testing
 
@@ -285,148 +193,3 @@ For a production deployment, consider adding:
 - Dead-letter queue handling for SNS/Lambda failures
 - CloudTrail and Config integration for governance
 - Automated rollback or recovery validation steps
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-"""},{"path":"src/lambda_function.py","content":"import json
-import logging
-import boto3
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-ec2_client = boto3.client('ec2')
-
-
-def lambda_handler(event, context):
-    logger.info("Received event: %s", json.dumps(event))
-
-    try:
-        sns_record = event['Records'][0]['Sns']
-        sns_message = json.loads(sns_record['Message'])
-    except (KeyError, json.JSONDecodeError) as err:
-        logger.error("Failed to parse SNS event payload: %s", str(err))
-        return {"statusCode": 400, "body": "Invalid payload"}
-
-    alarm_name = sns_message.get('AlarmName', 'Unknown')
-    new_state = sns_message.get('NewStateValue', 'Unknown')
-    dimensions = sns_message.get('Trigger', {}).get('Dimensions', [])
-
-    instance_id = None
-    for dim in dimensions:
-        if dim.get('name') == 'InstanceId':
-            instance_id = dim.get('value')
-            break
-
-    if not instance_id:
-        logger.error("No InstanceId found in alarm dimensions.")
-        return {"statusCode": 400, "body": "Instance ID not present"}
-
-    logger.info("Alarm '%s' triggered state '%s' for instance: %s", alarm_name, new_state, instance_id)
-
-    try:
-        response = ec2_client.describe_instances(InstanceIds=[instance_id])
-        state = response['Reservations'][0]['Instances'][0]['State']['Name']
-        logger.info("Current state of instance %s is %s", instance_id, state)
-
-        if state not in ['running', 'stopping']:
-            logger.warning("Instance %s is in state '%s'. Skipping reboot action.", instance_id, state)
-            return {"statusCode": 200, "body": "No action needed"}
-
-        logger.info("Initiating automated reboot for instance: %s", instance_id)
-        ec2_client.reboot_instances(InstanceIds=[instance_id])
-        logger.info("Reboot signal successfully dispatched to instance %s", instance_id)
-
-        return {
-            "statusCode": 200,
-            "body": f"Successfully initiated remediation for {instance_id}"
-        }
-
-    except Exception as exc:
-        logger.error("Error executing remediation on instance %s: %s", instance_id, str(exc))
-        raise exc
-"""},{"path":"iam/lambda-policy.json","content":"{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "EC2StateReadAndRebootPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:DescribeInstances",
-        "ec2:DescribeInstanceStatus",
-        "ec2:RebootInstances"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "CloudWatchLogsAccess",
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
-      "Resource": "arn:aws:logs:*:*:*"
-    }
-  ]
-}
-"}]}
