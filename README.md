@@ -1,33 +1,20 @@
 # Automated EC2 Incident Remediation & Monitoring Pipeline
 
-An event-driven cloud monitoring and automated remediation pipeline on AWS. This system detects anomalous CPU degradation on Amazon EC2 instances and initiates zero-touch serverless recovery via Amazon CloudWatch, SNS, and AWS Lambda using Python and Boto3.
+An event-driven cloud monitoring and automated remediation pipeline on AWS. This system detects anomalous CPU degradation on Amazon EC2 instances and initiates zero-touch serverless recovery via AWS Lambda.
 
 ---
 
 ## Architecture Overview
 
-```text
-[ Amazon EC2 Instance ]
-      │
-      │  (High CPU load / runaway process)
-      ▼
-[ CloudWatch Metric Alarm ]  (CPUUtilization > 40%)
-      │
-      │  (Alarm state: OK -> ALARM)
-      ▼
-[ Amazon SNS Topic ]  (ec2-incident-alerts)
-      │
-      │  (Asynchronous event delivery)
-      ▼
-[ AWS Lambda Function ]  (ec2_auto_remediator)
-      │
-      │  (Validates instance state and calls ec2:RebootInstances)
-      ▼
-[ Zero-Touch Reboot Initiated ]
-      │
-      ▼
-[ CPU Returns to Baseline ] -> [ Alarm Returns to OK ]
-```
+![Architecture diagram](docs/Architecture.png)
+
+The workflow is as follows:
+
+- Amazon EC2 instance experiences high CPU usage or an unhealthy workload condition
+- CloudWatch emits an alarm when CPU utilization exceeds the configured threshold
+- Amazon SNS delivers the alarm event to a Lambda-based remediation function
+- AWS Lambda validates the instance state and triggers `ec2:RebootInstances`
+- The instance is recovered automatically and the alarm returns to `OK` once the system stabilizes
 
 ---
 
@@ -61,6 +48,8 @@ aws-ec2-incident-auto-remediation/
 ├── iam/
 │   └── lambda-policy.json       # Least-privilege IAM policy document
 ├── README.md                    # Deployment guide and project documentation
+├── docs/
+│   └── Architecture.png          # Architecture diagram
 └── architecture/
     └── (optional diagram assets)
 ```
@@ -186,7 +175,7 @@ When finished testing, delete the following resources to avoid additional charge
 
 ## Summary
 
-This repository provides a simple, practical AWS incident remediation pattern that combines monitoring, messaging, and serverless automation to recover EC2 instances automatically when CPU anomalies occur.
+This repository provides a simple, practical AWS incident remediation pattern that combines monitoring, messaging, and serverless automation to recover EC2 instances automatically when CPU anomalies are detected.
 
 It is ideal for learning AWS event-driven automation, least-privilege IAM design, and operational resilience patterns.
 
